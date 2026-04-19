@@ -4,6 +4,9 @@ When Windows Location Services is polluted with incorrect data for your WiFi BSS
 
 This registry modification disables Windows' WiFi-based location inference, forcing fallback to IP-based geolocation. Reverse-engineered from `LocationFramework.dll` (`CLocationInferenceServices<ILocationWiFiBeaconInformation>::IsInferenceRequestAllowed`).
 
+1. [Quick fix — disable WiFi location inference](#disabling-microsofts-wifi-based-location-database-on-windows)
+2. [Permanent fix — use your phone as a GPS source](#use-your-phone-as-a-gps-source-for-windows)
+
 **Not officially documented by Microsoft. Use at your own risk.**
 
 ## Registry key
