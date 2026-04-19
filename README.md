@@ -97,6 +97,76 @@ Reverse-engineered via Ghidra analysis of `C:\Windows\System32\LocationFramework
 
 ---
 
-**README suggestion for the repo:**
+# Microsoft Location Service Endpoints (Orion)
 
-Title it something searchable like `windows-wifi-location-fix` or `fix-windows-location-service-wrong-location`. Add tags for `windows`, `geolocation`, `lfsvc`, `registry`, `privacy`. That way people hitting this exact problem via Google can actually find your repo.
+Reverse-engineered from `C:\Windows\System32\LocationFramework.dll`.
+
+## The endpoints
+
+| URL | Purpose |
+|-----|---------|
+| `https://inference.location.live.net/` | **Production inference** — WiFi BSSID/cell tower/Bluetooth beacon → coordinates lookup |
+| `https://staging-inference.location.live.net/` | Staging environment for the above (Microsoft internal testing) |
+| `https://partnernext-inference.location.live-int.com/` | Internal/partner test environment |
+| `https://agps.location.live.net/` | Production AGPS — Assisted GPS ephemeris data |
+| `https://partnernext-agps.location.live-int.com/` | AGPS internal/test environment |
+| `https://dev.virtualearth.net/REST/...` | Bing Maps REST — reverse geocoding (coordinates → street address) |
+| `https://login.microsoft.com` | Authentication |
+| `http://inference.location.live.com` | Legacy HTTP inference URL (older builds) |
+| `http://agps.location.live.com` | Legacy HTTP AGPS URL |
+
+Internal Microsoft codename for the backend system: **Orion**.
+
+## How the URL is picked
+
+In `LSUtility::GetWebServiceURI(WS_REPORT_TYPE, WSConfig*, string*)`:
+
+**Step 1 — report type decides which family:**
+
+| Report type | Family |
+|---|---|
+| `1` or `2` | Inference |
+| `3` or `4` | AGPS |
+| other | Returns `0x80070057` (invalid argument) |
+
+**Step 2 — environment selection:**
+
+If a WIL feature flag is enabled, URL is picked from an array indexed by `WSConfig+0x68` (prod / staging / internal-test — array lives at `PTR_c_orionServerUrl_PROD_18016eeb0`).
+
+If the feature flag is disabled (older path), `WSConfig::IsUsingIntEnvironment()` returns 0 for consumer installs → production URL.
+
+**Step 3 — tile URL override:**
+
+`GetOrionInferenceTileUrl()` is called. If it returns a non-empty string, that overrides the selected URL. Probably used for regional routing or server-side A/B tests.
+
+**Step 4 — API path appended:**
+
+`GetServiceEndpointAPI(reportType, url)` appends the specific API path (e.g. `/inferenceV21/Pox/Inference` or similar) to form the final URL.
+
+**Net result for a normal consumer machine:** requests go to `https://inference.location.live.net/<api-path>`.
+
+## How to find this yourself in Ghidra
+
+**Setup:**
+1. Copy `C:\Windows\System32\LocationFramework.dll` to a working folder (the file is locked while lfsvc is running)
+2. Import into a Ghidra project
+3. Load Microsoft's public PDB symbols (File → Load PDB File → configure Symbol Server URL to `https://msdl.microsoft.com/download/symbols`, local cache to `C:\symbols`, download and apply)
+4. Run Auto Analyze with PDB analyzer enabled
+
+**Find the endpoint strings:**
+1. Search → For Strings (Ctrl+Shift+S)
+2. Filter by `location.live` or `inference` or `https://`
+3. You'll see entries with symbol names like `c_orionServerUrl_PROD`, `c_wcszInfere...`, `c_wcszAGPS...`
+
+**Find the URL-picker function:**
+1. Double-click the string `https://inference.location.live.net/` in the results
+2. Jumps to its address in the Listing view
+3. Right-click the label → References → Find References to
+4. One of the referencing functions is `LSUtility::GetWebServiceURI` — that's the URL selector
+
+**Optional deeper dives:**
+- Navigate to `PTR_c_orionServerUrl_PROD_18016eeb0` (the URL array) to see the environment table in full
+- Find references to `GetWebServiceURI` to find the HTTP senders that use these URLs
+- Find references to the field `WSConfig + 0x68` to find where the environment gets configured
+
+Addresses (like `18016eeb0`) will differ slightly across Windows builds. The function names stay stable because they come from Microsoft's public PDB symbols.
