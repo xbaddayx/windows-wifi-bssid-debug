@@ -196,19 +196,18 @@ BlueNMEA broadcasts standard NMEA 0183 sentences (`$GPGGA`, `$GPRMC`, etc.) over
 ## Setup
 
 **Requirements:**
-- Android phone (iOS blocks third-party Bluetooth SPP — won't work)
-- [BlueNMEA](https://play.google.com/store/apps/details?id=name.kellermann.max.bluenmea) (free)
-- [GPSDirect](https://www.gpssensordrivers.com/) (Windows sensor driver)
+- Android phone (dont own ios)
+- GPSNmeaTether andoid app (free)
+- [GPSDirect](https://www.gpssensordrivers.com/#home) (Windows sensor driver free)
 
 **Phone side:**
-1. Install BlueNMEA, grant Precise Location permission
+1. Install GPSNmeaTether, grant Precise Location permission
 2. Start the service
 3. Plug phone in (continuous GPS + Bluetooth drains battery)
-4. Place near a window for sky visibility
 
 **Pair the phone:**
 1. Windows Settings → Bluetooth & devices → Add device → Bluetooth → pair
-2. Run `control bthprops.cpl` → COM Ports tab
+2. Find Bluetoothe settings → COM Ports tab
 3. Note the "Outgoing" COM port (e.g., `COM8 Outgoing <phone> 'GPS NMEA Tether'`)
 
 **Verify NMEA is flowing (PowerShell, replace COM8 with your port):**
