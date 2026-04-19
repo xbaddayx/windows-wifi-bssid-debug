@@ -170,3 +170,120 @@ If the feature flag is disabled (older path), `WSConfig::IsUsingIntEnvironment()
 - Find references to the field `WSConfig + 0x68` to find where the environment gets configured
 
 Addresses (like `18016eeb0`) will differ slightly across Windows builds. The function names stay stable because they come from Microsoft's public PDB symbols.
+
+---
+
+# Use Your Phone as a GPS Source for Windows
+
+Eventually updates the MicrosoftDB with accurate information so you'll no longer need this. No idea how long this will take. Feeds phone GPS into Windows Location Service via Bluetooth NMEA streaming. Windows prioritizes GPS over all other location providers, so this overrides Microsoft's WiFi database, IP geolocation, and any other source.
+
+## How it works
+
+```
+Phone GPS → BlueNMEA app → Bluetooth SPP (Serial Port Profile)
+         → Windows COM port → GPSDirect driver (registers as Sensor API GPS)
+         → Windows Location Service sees a GPS provider
+         → All location queries return GPS coordinates
+```
+
+**Why it works:** Windows' `lfsvc` (Geolocation Service) uses a provider priority chain. GPS outranks WiFi inference, cell triangulation, and IP geolocation. When any GPS source is registered and producing data, everything else becomes irrelevant.
+
+BlueNMEA broadcasts standard NMEA 0183 sentences (`$GPGGA`, `$GPRMC`, etc.) over Bluetooth SPP. Windows pairs with the phone and exposes the Bluetooth connection as a virtual COM port. GPSDirect reads that COM port and registers it as a location sensor via the Windows Sensor API, which `lfsvc` consumes.
+
+## Setup
+
+**Requirements:**
+- Android phone (iOS blocks third-party Bluetooth SPP — won't work)
+- [BlueNMEA](https://play.google.com/store/apps/details?id=name.kellermann.max.bluenmea) (free)
+- [GPSDirect](https://www.gpssensordrivers.com/) (Windows sensor driver)
+
+**Phone side:**
+1. Install BlueNMEA, grant Precise Location permission
+2. Start the service
+3. Plug phone in (continuous GPS + Bluetooth drains battery)
+4. Place near a window for sky visibility
+
+**Pair the phone:**
+1. Windows Settings → Bluetooth & devices → Add device → Bluetooth → pair
+2. Run `control bthprops.cpl` → COM Ports tab
+3. Note the "Outgoing" COM port (e.g., `COM8 Outgoing <phone> 'GPS NMEA Tether'`)
+
+**Verify NMEA is flowing (PowerShell, replace COM8 with your port):**
+
+```powershell
+$port = New-Object System.IO.Ports.SerialPort "COM8", 4800, "None", 8, "One"
+$port.ReadTimeout = 5000
+$port.Open()
+Start-Sleep -Seconds 5
+$port.ReadExisting()
+$port.Close()
+```
+
+Expect lines like `$GPGGA,...` and `$GPRMC,...`. If nothing, try baud 9600, 38400, or 115200.
+
+**Install GPSDirect:** point it at your COM port and baud rate. It registers as a Sensor API location sensor.
+
+**Verify end-to-end:**
+
+```powershell
+Add-Type -AssemblyName System.Device
+$w = New-Object System.Device.Location.GeoCoordinateWatcher
+$w.Start(); Start-Sleep 10; $w.Position.Location; $w.Stop()
+```
+
+GPS is working when you see:
+- `HorizontalAccuracy : 1` (single-meter accuracy)
+- `VerticalAccuracy` populated (only GPS provides altitude)
+- `Speed` and `Course` populated (only GPS provides velocity)
+
+## How fast it takes effect
+
+**For your laptop: immediately.** As soon as NMEA is flowing and GPSDirect is running, Windows Location Service picks up the GPS provider on its next query. Browsers, apps, and Windows features reading location all get GPS coordinates right away — no waiting, no aggregation, no sync period.
+
+**For Microsoft's public BSSID database: months, possibly never.**
+
+Having a GPS source on your laptop doesn't directly push corrections to Microsoft. Microsoft's DB updates through their crowdsourcing pipeline, which aggregates observations from many contributing devices over time. A single laptop reporting from one location is a small input to a big system.
+
+Realistic expectations based on public reports from people in similar situations (moved residence, waited for Microsoft's WiFi DB to correct):
+- **1-2 months:** too soon to expect change for entrenched pollution
+- **2-6 months:** typical timeframe where corrections may appear
+- **Sometimes never:** if the old data has many observations and few new ones contribute, the pollution can persist indefinitely
+
+The good news is **you don't need Microsoft's DB to ever update**. Your laptop uses the GPS source directly, so Newark is gone from your laptop permanently regardless of what Microsoft's servers think.
+
+## Caveats
+
+- Phone must stay plugged in, running BlueNMEA, and near a window
+- If the phone sleeps or loses Bluetooth, the stream stops and Windows falls back to whatever other providers are enabled
+- GPSDirect is commercial (free trial, paid license for long-term use); a $20 USB GPS dongle is a comparable alternative with no software licensing
+- iPhone doesn't work — Apple blocks third-party Bluetooth SPP access
+- Other Windows machines in your household aren't affected — each needs its own GPS source
+
+## Trigger Updates
+
+Simple script to run
+```
+Add-Type -AssemblyName System.Device
+  $w = New-Object System.Device.Location.GeoCoordinateWatcher
+  $w.Start()
+  while ($true) { 
+      $w.Position.Location | Format-List 
+      Start-Sleep -Seconds 1 
+  }
+```
+Websites to launch:
+https://www.openstreetmap.org/ — click the "show my location" arrow icon on the right side
+https://whatismyip.live/my-location
+https://browserleaks.com/geo — click "Get my location"
+https://bing.com/maps — still works, Bing Maps wasn't retired
+Google Maps with location enabled
+
+## Launch rate + Laziness
+Big uncertainty
+The pairing validity rate is the wild card. The static code tells us pairing happens within this + 0x78 ms and validated via IsObservationValid, but neither value is visible to us. If most pairings fail (very possible when stationary), the actual SendObservationForUpload count could be 10x lower than the estimate. If most pass, 2x higher.
+So honest summary: intake is probably (given static analysis) ~2/sec, the processing loop definitely fires ~every 50 seconds, but how many observations actually exit the function toward telemetry is the uncertain part. Somewhere between "a few per minute" and "a few per hour" actually make it to the ETW write.
+
+If you want to figure out for sure, you'll have to use ghdira debugger to identify the actual Intake and Outake shit and then event trace that stuff, run the geo location stuff, and compare trigger ammounts.
+Can't exactly share anymore cause thats probably not very safe.
+
+Hope this helps someone out there!
